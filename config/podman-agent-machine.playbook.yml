@@ -1,0 +1,54 @@
+---
+- name: Provision dedicated rootless Podman user
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    testrunner_user: testrunner
+    testrunner_subuid_start: 200000
+    testrunner_subuid_count: 65536
+
+  tasks:
+    - name: Ensure testrunner user exists
+      ansible.builtin.user:
+        name: "{{ testrunner_user }}"
+        shell: /bin/bash
+        create_home: true
+
+    - name: Ensure subordinate UID range exists
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ testrunner_user }}:"
+        line: "{{ testrunner_user }}:{{ testrunner_subuid_start }}:{{ testrunner_subuid_count }}"
+        create: true
+
+    - name: Ensure subordinate GID range exists
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ testrunner_user }}:"
+        line: "{{ testrunner_user }}:{{ testrunner_subuid_start }}:{{ testrunner_subuid_count }}"
+        create: true
+
+    - name: Look up testrunner UID
+      ansible.builtin.command: id -u {{ testrunner_user }}
+      register: testrunner_uid
+      changed_when: false
+
+    - name: Enable lingering for testrunner
+      ansible.builtin.command: loginctl enable-linger {{ testrunner_user }}
+      changed_when: false
+
+    - name: Enable podman.socket for testrunner
+      ansible.builtin.command: systemctl --user enable podman.socket
+      become_user: "{{ testrunner_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ testrunner_uid.stdout }}"
+      register: enable_socket
+      changed_when: "'Created symlink' in enable_socket.stdout or 'Created symlink' in enable_socket.stderr"
+
+    - name: Start podman.socket for testrunner
+      ansible.builtin.command: systemctl --user start podman.socket
+      become_user: "{{ testrunner_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ testrunner_uid.stdout }}"
+      changed_when: false

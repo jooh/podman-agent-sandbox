@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: bootstrap-podman-machine [--with-playbook] [MACHINE_NAME]
+
+Create or start a hardened Podman machine with scoped machine defaults.
+
+Options:
+  --with-playbook  Apply the guest provisioning playbook on first create.
+  -h, --help       Show this help text.
+
+Environment:
+  SKIP_BREW=1      Skip `brew bundle check/install`.
+  PODMAN_HOST_SHARE_DIR
+                   Override the dedicated host path mounted into the VM.
+EOF
+}
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+machine_name="dev-agents"
+with_playbook=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-playbook)
+      with_playbook=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      fail "unknown option: $1"
+      ;;
+    *)
+      machine_name="$1"
+      ;;
+  esac
+  shift
+done
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+brewfile="$repo_root/Brewfile"
+containers_conf_base="$repo_root/config/podman-machine.containers.conf"
+playbook_path="$repo_root/config/podman-agent-machine.playbook.yml"
+verify_script="$repo_root/scripts/verify-podman-machine"
+host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
+guest_share_dir="/Users"
+
+command -v podman >/dev/null 2>&1 || fail "podman is required"
+
+if [[ "${SKIP_BREW:-0}" != "1" ]]; then
+  command -v brew >/dev/null 2>&1 || fail "brew is required unless SKIP_BREW=1"
+  log "checking Homebrew bundle"
+  brew bundle check --file "$brewfile" || brew bundle install --file "$brewfile"
+fi
+
+if [[ ! -f "$containers_conf_base" ]]; then
+  fail "missing machine config: $containers_conf_base"
+fi
+
+mkdir -p "$host_share_dir"
+tmp_containers_conf="$(mktemp)"
+trap 'rm -f "$tmp_containers_conf"' EXIT
+
+escaped_host_share_dir="${host_share_dir//\\/\\\\}"
+escaped_host_share_dir="${escaped_host_share_dir//\"/\\\"}"
+escaped_guest_share_dir="${guest_share_dir//\\/\\\\}"
+escaped_guest_share_dir="${escaped_guest_share_dir//\"/\\\"}"
+
+cat "$containers_conf_base" > "$tmp_containers_conf"
+printf 'volumes = ["%s:%s"]\n' "$escaped_host_share_dir" "$escaped_guest_share_dir" >> "$tmp_containers_conf"
+
+if ! podman machine inspect "$machine_name" >/dev/null 2>&1; then
+  if [[ "$with_playbook" -eq 1 ]]; then
+    [[ -f "$playbook_path" ]] || fail "missing playbook: $playbook_path"
+    log "creating machine $machine_name with guest playbook"
+    CONTAINERS_CONF="$tmp_containers_conf" podman machine init --playbook "$playbook_path" "$machine_name"
+  else
+    log "creating machine $machine_name"
+    CONTAINERS_CONF="$tmp_containers_conf" podman machine init "$machine_name"
+  fi
+elif [[ "$with_playbook" -eq 1 ]]; then
+  fail "--with-playbook only applies on first create; remove and recreate $machine_name to reprovision it"
+fi
+
+state="$(podman machine inspect --format '{{.State}}' "$machine_name")"
+if [[ "$state" != "running" ]]; then
+  log "starting machine $machine_name"
+  start_output="$(podman machine start "$machine_name" 2>&1)" || {
+    if [[ "$start_output" == *"only one VM can be active at a time"* ]]; then
+      fail "cannot start $machine_name while another Podman machine is active; stop the current machine and rerun bootstrap. Original error: $start_output"
+    fi
+    fail "$start_output"
+  }
+  printf '%s\n' "$start_output"
+else
+  log "machine $machine_name is already running"
+fi
+
+log "verifying machine $machine_name"
+"$verify_script" "$machine_name"

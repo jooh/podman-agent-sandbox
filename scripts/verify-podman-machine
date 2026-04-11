@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: verify-podman-machine [--require-testrunner] MACHINE_NAME
+
+Validate the hardening invariants for a named Podman machine.
+
+Options:
+  --require-testrunner  Require the optional guest playbook state.
+  -h, --help            Show this help text.
+EOF
+}
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+wait_for_machine_ssh() {
+  local attempt
+
+  for attempt in {1..30}; do
+    if podman machine ssh "$machine_name" true >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  fail "machine $machine_name SSH did not become ready in time"
+}
+
+require_testrunner=0
+machine_name=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --require-testrunner)
+      require_testrunner=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      fail "unknown option: $1"
+      ;;
+    *)
+      if [[ -n "$machine_name" ]]; then
+        fail "only one machine name may be provided"
+      fi
+      machine_name="$1"
+      ;;
+  esac
+  shift
+done
+
+[[ -n "$machine_name" ]] || fail "machine name is required"
+command -v podman >/dev/null 2>&1 || fail "podman is required"
+command -v jq >/dev/null 2>&1 || fail "jq is required"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
+
+inspect_json="$(podman machine inspect "$machine_name" 2>/dev/null || true)"
+state="$(printf '%s\n' "$inspect_json" | jq -r '.[0].State // empty')"
+[[ -n "$state" ]] || fail "machine $machine_name does not exist"
+[[ "$state" == "running" ]] || fail "machine $machine_name is $state; start it before verifying"
+
+rootful="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Rootful')"
+[[ "$rootful" == "false" ]] || fail "machine $machine_name is rootful; expected a rootless machine"
+
+log "waiting for SSH readiness"
+wait_for_machine_ssh
+
+log "checking for failed systemd units"
+failed_units="$(podman machine ssh "$machine_name" systemctl --failed --plain --no-legend --no-pager 2>/dev/null || true)"
+if [[ -n "$failed_units" ]]; then
+  fail "machine $machine_name has failed systemd units: $(printf '%s' "$failed_units" | paste -sd ';' -)"
+fi
+
+log "checking configured host mount sources"
+unexpected_sources="$(
+  printf '%s\n' "$inspect_json" |
+    jq -r '.[0].Mounts[]? | select(.Source == "/Users" or .Source == "/private" or .Source == "/var/folders") | .Source'
+)"
+if [[ -n "$unexpected_sources" ]]; then
+  fail "machine $machine_name exposes broad host mount sources: $(printf '%s' "$unexpected_sources" | paste -sd ', ' -)"
+fi
+
+mount_count="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Mounts | length')"
+[[ "$mount_count" -le 1 ]] || fail "machine $machine_name has $mount_count mounts; expected at most one dedicated host share"
+
+configured_source="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Mounts[0].Source // empty')"
+if [[ -n "$configured_source" && "$configured_source" != "$host_share_dir" ]]; then
+  fail "machine $machine_name mounts $configured_source; expected only $host_share_dir"
+fi
+
+log "checking rootful socket absence"
+if podman machine ssh "$machine_name" test -S /run/podman/podman.sock; then
+  fail "machine $machine_name exposes /run/podman/podman.sock"
+fi
+
+log "checking host/guest Podman version alignment"
+host_version="$(podman --version | awk '{print $3}')"
+guest_version="$(podman machine ssh "$machine_name" podman version --format '{{.Version}}')"
+[[ "$host_version" == "$guest_version" ]] || fail "host Podman $host_version does not match guest Podman $guest_version"
+
+if [[ "$require_testrunner" -eq 1 ]]; then
+  log "checking optional testrunner provisioning"
+  testrunner_uid="$(podman machine ssh "$machine_name" id -u testrunner 2>/dev/null || true)"
+  [[ -n "$testrunner_uid" ]] || fail "testrunner user is missing"
+
+  socket_path="/run/user/${testrunner_uid}/podman/podman.sock"
+  if ! podman machine ssh "$machine_name" test -S "$socket_path"; then
+    fail "testrunner socket is missing at $socket_path"
+  fi
+fi
+
+log "machine $machine_name passed verification"
