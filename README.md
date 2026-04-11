@@ -30,6 +30,27 @@ The current baseline avoids Podman's broad default shares like `/Users`, `/priva
 
 That is narrower than the Podman default, but it is not yet a true zero-mount setup.
 
+The intended isolation model is layered. The application runs inside a rootless container in the Podman VM, and the VM provides the Linux kernel boundary between that workload and the macOS host:
+
+```mermaid
+flowchart TB
+    subgraph host["Host OS: macOS user session"]
+        subgraph vm["Podman machine: Fedora CoreOS VM"]
+            kernel["Linux kernel and system services"]
+
+            subgraph container["Rootless Podman container"]
+                subgraph workload["Application workload"]
+                    app["Application process
+e.g. opencode"]
+                    harness["Optional harness / test runner"]
+                end
+            end
+        end
+    end
+```
+
+The main point of this repo is to make the container-to-host path narrower by hardening the VM configuration, especially around host mounts and exposed Podman control surfaces.
+
 ## Requirements
 
 - macOS on Apple silicon
