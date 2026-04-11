@@ -65,8 +65,14 @@ command -v podman >/dev/null 2>&1 || fail "podman is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+path_helpers="$script_dir/lib/podman-machine-paths.sh"
 repo_root="$(cd "$script_dir/.." && pwd)"
 host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
+[[ -f "$path_helpers" ]] || fail "missing path helpers: $path_helpers"
+# shellcheck source=./lib/podman-machine-paths.sh
+source "$path_helpers"
+broad_mount_sources_json="$(podman_broad_host_mount_sources_json)"
+rootful_socket_path="$(podman_rootful_socket_path)"
 
 inspect_json="$(podman machine inspect "$machine_name" 2>/dev/null || true)"
 state="$(printf '%s\n' "$inspect_json" | jq -r '.[0].State // empty')"
@@ -88,7 +94,8 @@ fi
 log "checking configured host mount sources"
 unexpected_sources="$(
   printf '%s\n' "$inspect_json" |
-    jq -r '.[0].Mounts[]? | select(.Source == "/Users" or .Source == "/private" or .Source == "/var/folders") | .Source'
+    jq -r --argjson broad_mount_sources "$broad_mount_sources_json" \
+      '.[0].Mounts[]? | select(.Source as $source | ($broad_mount_sources | index($source)) != null) | .Source'
 )"
 if [[ -n "$unexpected_sources" ]]; then
   fail "machine $machine_name exposes broad host mount sources: $(printf '%s' "$unexpected_sources" | paste -sd ', ' -)"
@@ -103,8 +110,8 @@ if [[ -n "$configured_source" && "$configured_source" != "$host_share_dir" ]]; t
 fi
 
 log "checking rootful socket absence"
-if podman machine ssh "$machine_name" test -S /run/podman/podman.sock; then
-  fail "machine $machine_name exposes /run/podman/podman.sock"
+if podman machine ssh "$machine_name" test -S "$rootful_socket_path"; then
+  fail "machine $machine_name exposes $rootful_socket_path"
 fi
 
 log "checking host/guest Podman version alignment"
@@ -117,7 +124,7 @@ if [[ "$require_testrunner" -eq 1 ]]; then
   testrunner_uid="$(podman machine ssh "$machine_name" id -u testrunner 2>/dev/null || true)"
   [[ -n "$testrunner_uid" ]] || fail "testrunner user is missing"
 
-  socket_path="/run/user/${testrunner_uid}/podman/podman.sock"
+  socket_path="$(podman_testrunner_socket_path "$testrunner_uid")"
   if ! podman machine ssh "$machine_name" test -S "$socket_path"; then
     fail "testrunner socket is missing at $socket_path"
   fi

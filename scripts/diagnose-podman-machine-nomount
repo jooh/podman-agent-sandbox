@@ -47,16 +47,22 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+path_helpers="$script_dir/lib/podman-machine-paths.sh"
+repo_root="$(cd "$script_dir/.." && pwd)"
+[[ -f "$path_helpers" ]] || fail "missing path helpers: $path_helpers"
+# shellcheck source=./lib/podman-machine-paths.sh
+source "$path_helpers"
+log_cmd="$(podman_macos_log_command)"
+
 require_command podman
 require_command jq
 require_command diff
-require_command /usr/bin/log
+require_command "$log_cmd"
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "$script_dir/.." && pwd)"
 containers_conf_base="$repo_root/config/podman-machine.containers.conf"
 host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
-guest_share_dir="/Users"
+guest_share_dir="$(podman_guest_share_dir)"
 artifacts_root="$repo_root/artifacts/podman-machine-diagnose/$machine_prefix"
 
 [[ -f "$containers_conf_base" ]] || fail "missing machine config: $containers_conf_base"
@@ -168,7 +174,7 @@ capture_host_runtime_artifacts() {
     ls -la "$runtime_dir" > "$report_dir/host-runtime-dir.txt" 2>&1 || true
   fi
 
-  /usr/bin/log show \
+  "$log_cmd" show \
     --style compact \
     --start "$case_start_time" \
     --predicate '(process == "podman" OR process == "vfkit" OR process == "gvproxy")' \

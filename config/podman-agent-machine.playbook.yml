@@ -7,24 +7,36 @@
     testrunner_user: testrunner
     testrunner_subuid_start: 200000
     testrunner_subuid_count: 65536
+    testrunner_shell_segments:
+      - bin
+      - bash
+    subuid_path_segments:
+      - etc
+      - subuid
+    subgid_path_segments:
+      - etc
+      - subgid
+    runtime_user_dir_segments:
+      - run
+      - user
 
   tasks:
     - name: Ensure testrunner user exists
       ansible.builtin.user:
         name: "{{ testrunner_user }}"
-        shell: /bin/bash
+        shell: "{{ [''] + testrunner_shell_segments | join('/') }}"
         create_home: true
 
     - name: Ensure subordinate UID range exists
       ansible.builtin.lineinfile:
-        path: /etc/subuid
+        path: "{{ [''] + subuid_path_segments | join('/') }}"
         regexp: "^{{ testrunner_user }}:"
         line: "{{ testrunner_user }}:{{ testrunner_subuid_start }}:{{ testrunner_subuid_count }}"
         create: true
 
     - name: Ensure subordinate GID range exists
       ansible.builtin.lineinfile:
-        path: /etc/subgid
+        path: "{{ [''] + subgid_path_segments | join('/') }}"
         regexp: "^{{ testrunner_user }}:"
         line: "{{ testrunner_user }}:{{ testrunner_subuid_start }}:{{ testrunner_subuid_count }}"
         create: true
@@ -42,7 +54,7 @@
       ansible.builtin.command: systemctl --user enable podman.socket
       become_user: "{{ testrunner_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ testrunner_uid.stdout }}"
+        XDG_RUNTIME_DIR: "{{ [''] + runtime_user_dir_segments + [testrunner_uid.stdout] | join('/') }}"
       register: enable_socket
       changed_when: "'Created symlink' in enable_socket.stdout or 'Created symlink' in enable_socket.stderr"
 
@@ -50,5 +62,5 @@
       ansible.builtin.command: systemctl --user start podman.socket
       become_user: "{{ testrunner_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ testrunner_uid.stdout }}"
+        XDG_RUNTIME_DIR: "{{ [''] + runtime_user_dir_segments + [testrunner_uid.stdout] | join('/') }}"
       changed_when: false
