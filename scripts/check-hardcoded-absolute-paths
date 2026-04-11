@@ -54,7 +54,7 @@ pattern_regex="$(
 )"
 
 if [[ $# -eq 0 ]]; then
-  set -- README.md TESTS.md hardened-podman-machine-plan.md scripts config
+  set -- README.md scripts config
 fi
 
 set +e

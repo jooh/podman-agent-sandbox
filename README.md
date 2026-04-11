@@ -1,89 +1,60 @@
 # agdev
 
-This repo bootstraps and documents a hardened Podman machine for Apple silicon macOS development setups.
+This repo bootstraps a dedicated rootless Podman machine for Apple silicon macOS development setups. The supported baseline is a named VM, `dev-agents` by default, that avoids Podman's broad default macOS shares and instead exposes at most one dedicated workspace share.
 
-The main goal is to create a dedicated VM for agent and containerized test workloads that:
+## What The Repo Provides
 
-- stays rootless
-- avoids Podman's broad default macOS host mounts
-- can be recreated from repo-managed config and scripts
-- can be verified and diagnosed with repeatable manual checks
+- `Brewfile` installs the required host tools: `podman` and `jq`.
+- `scripts/bootstrap-podman-machine` creates or starts the hardened machine and runs verification.
+- `scripts/verify-podman-machine` checks the machine's hardening invariants.
+- `scripts/diagnose-podman-machine-nomount` compares a zero-mount scratch machine against the repo's one-share baseline and captures host and guest artifacts.
+- `config/podman-machine.containers.conf` is the scoped machine config template used only during `podman machine init`.
+- `config/podman-agent-machine.playbook.yml` is an optional first-boot playbook for a dedicated `testrunner` user and rootless `podman.socket`.
 
-## What It Does
+## Supported Baseline
 
-The repo currently provides:
+Bootstrap does not overwrite `~/.config/containers/containers.conf`. It renders a temporary `containers.conf`, passes it to `podman machine init` via `CONTAINERS_CONF`, and appends one dedicated host share sourced from `.podman-machine-share/` unless `PODMAN_HOST_SHARE_DIR` overrides it.
 
-- `Brewfile` for required host tools
-- `scripts/bootstrap-podman-machine` to create or start a hardened machine
-- `scripts/verify-podman-machine` to check the hardening invariants
-- `scripts/diagnose-podman-machine-nomount` to compare a zero-mount machine against the current control configuration
-- `config/podman-machine.containers.conf` for scoped machine defaults
-- `config/podman-agent-machine.playbook.yml` for optional first-boot guest provisioning
+The verification script enforces the current baseline:
 
-The default machine name is `dev-agents`.
+- the machine exists, is running, and has no failed systemd units
+- the machine is rootless
+- default broad macOS mount sources are absent
+- at most one dedicated host share is configured
+- the configured rootful Podman socket is absent in the guest
+- host and guest Podman versions match
 
-## Current Security Shape
-
-The bootstrap flow does not overwrite `~/.config/containers/containers.conf`. It creates a temporary `containers.conf` and passes it to `podman machine init` via `CONTAINERS_CONF`.
-
-The current baseline avoids Podman's broad default macOS shares. As implemented today, bootstrap appends one dedicated host share sourced from `.podman-machine-share` and mounts that into the guest path selected by `PODMAN_GUEST_SHARE_DIR`.
-
-That is narrower than the Podman default, but it is not yet a true zero-mount setup.
-
-The intended isolation model is layered. The application runs inside a rootless container in the Podman VM, and the VM provides the Linux kernel boundary between that workload and the macOS host:
-
-```mermaid
-flowchart TB
-    subgraph host["Host OS: macOS user session"]
-        subgraph vm["Podman machine: Fedora CoreOS VM"]
-            kernel["Linux kernel and system services"]
-
-            subgraph container["Rootless Podman container"]
-                subgraph workload["Application workload"]
-                    app["Application process
-e.g. opencode"]
-                    harness["Optional harness / test runner"]
-                end
-            end
-        end
-    end
-```
-
-The main point of this repo is to make the container-to-host path narrower by hardening the VM configuration, especially around host mounts and exposed Podman control surfaces.
-
-## Requirements
-
-- macOS on Apple silicon
-- Homebrew
-- Podman `5.8.1` was the version validated locally in this repo
-
-If you already have Podman installed and want to skip `brew bundle`, set `SKIP_BREW=1`.
-
-Path-related overrides:
-
-- `PODMAN_HOST_SHARE_DIR` changes the dedicated host directory shared into the VM.
-- `PODMAN_GUEST_SHARE_DIR` changes the guest mount target used for that share.
-- `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest socket path checked by verification.
+`--with-playbook` adds one optional layer on first create: a `testrunner` guest user with a per-user `podman.socket`. That state is checked with `./scripts/verify-podman-machine --require-testrunner <machine-name>`.
 
 ## Quick Start
 
-Bootstrap the default hardened machine:
+Create or start the default machine:
 
 ```bash
 ./scripts/bootstrap-podman-machine
 ```
 
-Bootstrap a machine with a custom name:
+Use a different machine name:
 
 ```bash
 ./scripts/bootstrap-podman-machine my-machine
 ```
 
-Skip Homebrew package management:
+Skip `brew bundle check/install` if the host tools are already installed:
 
 ```bash
 SKIP_BREW=1 ./scripts/bootstrap-podman-machine
 ```
+
+Apply the optional guest playbook on first create:
+
+```bash
+./scripts/bootstrap-podman-machine --with-playbook
+```
+
+`--with-playbook` only works while creating a new machine. Recreate the machine if you need to reprovision it.
+
+## Verification And Diagnostics
 
 Run the verifier directly:
 
@@ -91,81 +62,55 @@ Run the verifier directly:
 ./scripts/verify-podman-machine dev-agents
 ```
 
-## Optional Guest Provisioning
-
-On first create, you can also apply the guest playbook:
+Require the optional `testrunner` state:
 
 ```bash
-./scripts/bootstrap-podman-machine --with-playbook
+./scripts/verify-podman-machine --require-testrunner dev-agents
 ```
 
-That path is intended for optional guest-side setup such as the dedicated `testrunner` user and socket.
-
-`--with-playbook` only applies on first create. If the machine already exists, remove and recreate it to reprovision the guest.
-
-## How Bootstrap Works
-
-`scripts/bootstrap-podman-machine` does the following:
-
-1. checks or installs Homebrew dependencies from `Brewfile`
-2. renders a temporary machine config from `config/podman-machine.containers.conf`
-3. appends one dedicated share from `.podman-machine-share` to the guest path from `PODMAN_GUEST_SHARE_DIR`
-4. creates the machine if it does not already exist
-5. starts the machine
-6. runs `scripts/verify-podman-machine`
-
-`scripts/verify-podman-machine` checks:
-
-- the machine exists and is running
-- the machine is rootless
-- broad host mount sources are absent
-- at most one dedicated host share is configured
-- the configured rootful socket path is absent in the guest
-- host and guest Podman versions match
-
-## No-Mount Diagnostics
-
-This repo also includes a dedicated comparison workflow for investigating `volumes = []` behavior:
+Investigate zero-mount versus one-share behavior:
 
 ```bash
 ./scripts/diagnose-podman-machine-nomount
 ```
 
-That script creates two fresh scratch machines:
+The diagnostic script creates two fresh scratch machines, writes artifacts under `artifacts/podman-machine-diagnose/<machine-prefix>/`, and captures:
 
-- `nomount`: `volumes = []`
-- `control`: one dedicated host share, matching the current bootstrap approach
+- generated machine config and ignition files
+- `podman machine inspect` output and state polling
+- host `vfkit`, `gvproxy`, and macOS unified logs when available
+- guest `journalctl` and `systemctl` output when SSH becomes available
 
-It writes artifacts under:
+Use that workflow when a machine fails early enough that normal guest inspection is incomplete.
 
-```text
-artifacts/podman-machine-diagnose/<machine-prefix>/
+## Useful Overrides
+
+- `SKIP_BREW=1` skips `brew bundle check/install`.
+- `PODMAN_HOST_SHARE_DIR` changes the dedicated host directory shared into the VM.
+- `PODMAN_GUEST_SHARE_DIR` changes the guest mount target for that share.
+- `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest rootful socket path checked by verification.
+- `PODMAN_TESTRUNNER_SOCKET_PATH` changes the guest `testrunner` socket path checked by `--require-testrunner`.
+- `MACOS_LOG_COMMAND` changes the host log command used by the diagnostic script.
+
+Generated local paths:
+
+- `.podman-machine-share/` is the default dedicated host share directory.
+- `artifacts/` stores diagnostic output and is ignored by git.
+
+## Repo Maintenance Checks
+
+For doc and script changes, the cheap repo-local checks are:
+
+```bash
+bash -n scripts/bootstrap-podman-machine \
+  scripts/verify-podman-machine \
+  scripts/diagnose-podman-machine-nomount \
+  scripts/check-hardcoded-absolute-paths \
+  scripts/lib/podman-machine-paths.sh
+
+./scripts/check-hardcoded-absolute-paths
+
+./scripts/bootstrap-podman-machine --help
+./scripts/verify-podman-machine --help
+./scripts/diagnose-podman-machine-nomount --help
 ```
-
-Captured artifacts include:
-
-- generated `.ign` files
-- machine inspect output
-- host `vfkit` serial logs
-- `gvproxy` logs when present
-- macOS unified log entries for `podman`, `vfkit`, and `gvproxy`
-- guest `journalctl` output when SSH becomes available
-
-This is the right entry point if a machine fails before normal guest access is available.
-
-## Current Findings
-
-The current local findings are:
-
-- Podman defaults on macOS expose broad host paths that this repo is trying to avoid.
-- A fresh diagnostic run on 2026-04-11 showed that a zero-mount scratch machine can boot successfully on this host with Podman `5.8.1`.
-- The zero-mount ignition still includes `immutable-root-off.service` and `immutable-root-on.service` even without any `.mount` units.
-- The older `dev-agents` emergency-mode boot does not currently reproduce as a simple "zero mounts are broken" failure.
-
-So the repo currently keeps the one-share workaround for the hardened bootstrap path, while the diagnostic workflow exists to keep investigating true zero-mount behavior.
-
-## Manual Verification
-
-The manual red/green checks are recorded in [TESTS.md](./TESTS.md).
-
-The higher-level implementation notes and rationale are in [hardened-podman-machine-plan.md](./hardened-podman-machine-plan.md).
