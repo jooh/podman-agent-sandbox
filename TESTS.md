@@ -12,9 +12,11 @@ These two checks demonstrate the insecure default this repo is meant to harden a
 ## Green Checks
 
 - [x] `bash -n scripts/bootstrap-podman-machine`
+- [x] `bash -n scripts/diagnose-podman-machine-nomount`
 - [x] `bash -n scripts/verify-podman-machine`
 - [x] `SKIP_BREW=1 ./scripts/bootstrap-podman-machine dev-agents`
 - [x] `./scripts/verify-podman-machine dev-agents` via bootstrap
+- [ ] `./scripts/diagnose-podman-machine-nomount`
 - [ ] `./scripts/verify-podman-machine --require-testrunner dev-agents` after recreating `dev-agents` with `--with-playbook`
 
 ## Expected Results
@@ -31,3 +33,5 @@ These two checks demonstrate the insecure default this repo is meant to harden a
 - On local Podman `5.8.1` for macOS, a machine created with zero mounts (`volumes = []`) entered Ignition emergency mode and never finished booting.
 - The current implementation uses one dedicated host share sourced from `.podman-machine-share` and verifies the host-side mount source via `podman machine inspect`.
 - On this host, `dev-agents` passes bootstrap-time verification but later shows as stopped in `podman machine list`; that durability issue was observed during testing and is not yet explained by the repo scripts.
+- `scripts/diagnose-podman-machine-nomount` writes comparable artifacts for the zero-mount and control-share cases under `artifacts/podman-machine-diagnose/<machine-prefix>/`.
+- The no-mount diagnostic captures host-side evidence even when guest SSH never comes up: the generated `.ign`, the `vfkit` serial log from the host temp directory, the `gvproxy` log when present, and the macOS unified log for `podman`, `vfkit`, and `gvproxy`.

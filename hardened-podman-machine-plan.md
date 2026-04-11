@@ -22,6 +22,8 @@ The bootstrap path defaults to phase 1 only. Guest provisioning is enabled expli
 
 On the current locally validated Podman `5.8.1` setup, a machine created with `volumes = []` never completed boot and dropped into Ignition emergency mode. The implemented baseline therefore uses one narrow dedicated host share instead of zero mounts.
 
+The repo now also needs a dedicated diagnostic workflow for that failure mode. The workflow should compare a fresh zero-mount machine against a fresh single-share control machine and collect both guest-side and host-side artifacts so the result can be traced back to Podman or AppleHV behavior instead of treated as an unexplained local flake.
+
 ## Design Summary
 
 ### Recommended approach
@@ -187,6 +189,19 @@ podman machine ssh dev-agents mount
 podman machine ssh dev-agents ls /Users
 podman machine ssh dev-agents id
 ```
+
+## No-Mount Diagnostic Workflow
+
+When `volumes = []` fails on macOS, the repo should not guess that some minimal host mount is required. Instead it should run a dedicated comparison workflow that:
+
+- creates a fresh `volumes = []` scratch machine
+- creates a fresh control machine with the current one-share workaround
+- captures each machine's generated `.ign`
+- captures each machine's host-side `vfkit` serial log and `gvproxy` log when present
+- captures the macOS unified log entries for `podman`, `vfkit`, and `gvproxy`
+- captures guest-side `systemctl` and `journalctl` output when the guest reaches SSH
+
+The important design point is that host-side logs must be first-class artifacts. On AppleHV, they can explain an ignition failure even when the guest never becomes reachable over SSH.
 
 ## Bootstrap Script Responsibilities
 

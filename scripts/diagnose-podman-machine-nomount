@@ -50,6 +50,7 @@ done
 require_command podman
 require_command jq
 require_command diff
+require_command /usr/bin/log
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
@@ -143,6 +144,36 @@ copy_machine_metadata() {
   fi
 }
 
+capture_host_runtime_artifacts() {
+  local machine_name="$1"
+  local inspect_path="$2"
+  local report_dir="$3"
+  local case_start_time="$4"
+  local runtime_dir
+  local podman_socket_path
+
+  podman_socket_path="$(jq -r '.[0].ConnectionInfo.PodmanSocket.Path // empty' "$inspect_path")"
+  if [[ -n "$podman_socket_path" ]]; then
+    runtime_dir="$(dirname "$podman_socket_path")"
+
+    if [[ -f "$runtime_dir/$machine_name.log" ]]; then
+      cp "$runtime_dir/$machine_name.log" "$report_dir/host-vfkit.log"
+    fi
+
+    if [[ -f "$runtime_dir/gvproxy.log" ]]; then
+      cp "$runtime_dir/gvproxy.log" "$report_dir/host-gvproxy.log"
+    fi
+
+    ls -la "$runtime_dir" > "$report_dir/host-runtime-dir.txt" 2>&1 || true
+  fi
+
+  /usr/bin/log show \
+    --style compact \
+    --start "$case_start_time" \
+    --predicate '(process == "podman" OR process == "vfkit" OR process == "gvproxy")' \
+    > "$report_dir/macos-unified-log.txt" 2>&1 || true
+}
+
 poll_machine_state() {
   local machine_name="$1"
   local output_path="$2"
@@ -180,28 +211,31 @@ run_case() {
   local ssh_output=""
   local attempt
   local state_after_poll
+  local case_start_time
 
   mkdir -p "$report_dir"
   remove_machine_if_present "$machine_name"
   ensure_other_machines_stopped "$machine_name" ""
 
+  case_start_time="$(date '+%Y-%m-%d %H:%M:%S')"
   tmp_containers_conf="$(mktemp)"
   write_case_config "$case_name" "$tmp_containers_conf"
   cp "$tmp_containers_conf" "$report_dir/containers.conf"
 
   log "initializing $machine_name ($case_name)"
-  CONTAINERS_CONF="$tmp_containers_conf" podman --log-level=debug machine init "$machine_name" > "$report_dir/init.txt" 2>&1
+  CONTAINERS_CONF="$tmp_containers_conf" podman machine init "$machine_name" > "$report_dir/init.txt" 2>&1
   copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.after-init.json"
 
   log "starting $machine_name"
   set +e
-  podman --log-level=debug machine start "$machine_name" > "$report_dir/start.txt" 2>&1
+  podman machine start "$machine_name" > "$report_dir/start.txt" 2>&1
   start_status=$?
   set -e
   printf '%s\n' "$start_status" > "$report_dir/start.exit"
 
   podman machine list > "$report_dir/machine-list.after-start.txt" 2>&1 || true
   copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.after-start.json"
+  capture_host_runtime_artifacts "$machine_name" "$report_dir/inspect.after-start.json" "$report_dir" "$case_start_time"
   poll_machine_state "$machine_name" "$report_dir/state-poll.txt"
   state_after_poll="$(podman machine inspect "$machine_name" 2>/dev/null | jq -r '.[0].State // "missing"')"
   printf '%s\n' "$state_after_poll" > "$report_dir/state.after-poll"
@@ -234,6 +268,7 @@ run_case() {
   fi
 
   copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.final.json"
+  capture_host_runtime_artifacts "$machine_name" "$report_dir/inspect.final.json" "$report_dir" "$case_start_time"
   rm -f "$tmp_containers_conf"
 }
 
