@@ -15,8 +15,8 @@ These two checks demonstrate the insecure default this repo is meant to harden a
 - [x] `bash -n scripts/diagnose-podman-machine-nomount`
 - [x] `bash -n scripts/verify-podman-machine`
 - [x] `SKIP_BREW=1 ./scripts/bootstrap-podman-machine dev-agents`
+- [x] `./scripts/diagnose-podman-machine-nomount`
 - [x] `./scripts/verify-podman-machine dev-agents` via bootstrap
-- [ ] `./scripts/diagnose-podman-machine-nomount`
 - [ ] `./scripts/verify-podman-machine --require-testrunner dev-agents` after recreating `dev-agents` with `--with-playbook`
 
 ## Expected Results
@@ -30,8 +30,10 @@ These two checks demonstrate the insecure default this repo is meant to harden a
 
 ## Notes
 
-- On local Podman `5.8.1` for macOS, a machine created with zero mounts (`volumes = []`) entered Ignition emergency mode and never finished booting.
 - The current implementation uses one dedicated host share sourced from `.podman-machine-share` and verifies the host-side mount source via `podman machine inspect`.
 - On this host, `dev-agents` passes bootstrap-time verification but later shows as stopped in `podman machine list`; that durability issue was observed during testing and is not yet explained by the repo scripts.
 - `scripts/diagnose-podman-machine-nomount` writes comparable artifacts for the zero-mount and control-share cases under `artifacts/podman-machine-diagnose/<machine-prefix>/`.
 - The no-mount diagnostic captures host-side evidence even when guest SSH never comes up: the generated `.ign`, the `vfkit` serial log from the host temp directory, the `gvproxy` log when present, and the macOS unified log for `podman`, `vfkit`, and `gvproxy`.
+- On 2026-04-11, a fresh diagnostic run on local Podman `5.8.1` produced healthy zero-mount and control-share scratch machines. Both cases reached SSH, reported no failed systemd units, and recorded `Ignition finished successfully`.
+- In the fresh zero-mount case, the generated ignition still included `immutable-root-off.service` and `immutable-root-on.service` even though there were no `.mount` units. On this host those units did not prevent boot.
+- The older emergency-mode failure therefore does not currently reproduce as “zero mounts are broken.” The remaining unresolved problem is why the previously created `dev-agents` machine logged an ignition emergency-mode boot while fresh scratch machines did not.

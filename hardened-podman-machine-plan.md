@@ -20,9 +20,11 @@ This repo now implements the plan in two phases:
 
 The bootstrap path defaults to phase 1 only. Guest provisioning is enabled explicitly with `--with-playbook` on first create so the secure baseline stays small and predictable.
 
-On the current locally validated Podman `5.8.1` setup, a machine created with `volumes = []` never completed boot and dropped into Ignition emergency mode. The implemented baseline therefore uses one narrow dedicated host share instead of zero mounts.
+Earlier local testing suggested that `volumes = []` dropped the machine into Ignition emergency mode, so the implemented baseline currently still uses one narrow dedicated host share instead of zero mounts.
 
 The repo now also needs a dedicated diagnostic workflow for that failure mode. The workflow should compare a fresh zero-mount machine against a fresh single-share control machine and collect both guest-side and host-side artifacts so the result can be traced back to Podman or AppleHV behavior instead of treated as an unexplained local flake.
+
+On 2026-04-11, that fresh diagnostic workflow showed a different result on local Podman `5.8.1`: a fresh zero-mount machine and a fresh one-share control machine both booted cleanly, reached SSH, and showed successful ignition. That means the repo no longer has evidence that a minimal host mount is required for machine startup on this host. The remaining gap is to explain why the older `dev-agents` machine hit an ignition emergency-mode boot even though fresh scratch machines do not.
 
 ## Design Summary
 
