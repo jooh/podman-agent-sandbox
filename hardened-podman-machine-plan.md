@@ -78,7 +78,7 @@ Example trust zones:
 
 ### 2. Remove default host mounts
 
-Do not allow the Podman VM to mount `/Users`, `/private`, `/var/folders`, or the developer's full home directory unless explicitly required.
+Do not allow the Podman VM to mount the default broad macOS convenience shares, or the developer's full home directory, unless explicitly required.
 
 This is the most important hardening change relative to the default convenience-oriented setup.
 
@@ -138,7 +138,7 @@ Initial hardened template:
 # bootstrap appends one dedicated host share at runtime
 ```
 
-Bootstrap renders a temporary machine config that mounts a single dedicated host path into an existing guest path such as `/Users`. On the current Podman release, custom machine mounts proved sensitive to guest target path selection, so verification checks the host-side source path from `podman machine inspect` instead of inferring exposure from the guest mountpoint name alone.
+Bootstrap renders a temporary machine config that mounts a single dedicated host path into the guest path selected by `PODMAN_GUEST_SHARE_DIR`. On the current Podman release, custom machine mounts proved sensitive to guest target path selection, so verification checks the host-side source path from `podman machine inspect` instead of inferring exposure from the guest mountpoint name alone.
 
 Optional additions may include resource sizing and Rosetta behavior depending on the team's requirements.
 
@@ -188,8 +188,8 @@ Suggested checks:
 
 ```bash
 podman machine ssh dev-agents mount
-podman machine ssh dev-agents ls /Users
 podman machine ssh dev-agents id
+podman machine inspect dev-agents
 ```
 
 ## No-Mount Diagnostic Workflow
@@ -269,7 +269,9 @@ Inside the dev container, only if a container really needs Podman access:
 Example environment:
 
 ```bash
-export CONTAINER_HOST=unix:///run/user/1001/podman/podman.sock
+source ./scripts/lib/podman-machine-paths.sh
+export PODMAN_TESTRUNNER_SOCKET_PATH="$(podman_testrunner_socket_path 1001)"
+export CONTAINER_HOST="unix://$PODMAN_TESTRUNNER_SOCKET_PATH"
 ```
 
 ## VS Code Integration

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+expect_matches=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --expect-matches)
+      expect_matches=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      fail "unknown option: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+path_helpers="$script_dir/lib/podman-machine-paths.sh"
+[[ -f "$path_helpers" ]] || fail "missing path helpers: $path_helpers"
+# shellcheck source=./lib/podman-machine-paths.sh
+source "$path_helpers"
+
+command -v jq >/dev/null 2>&1 || fail "jq is required"
+command -v rg >/dev/null 2>&1 || fail "rg is required"
+
+declare -a path_patterns=(
+  "$(join_posix_path Users)"
+  "$(join_posix_path private)"
+  "$(join_posix_path var folders)"
+  "$(join_posix_path run podman)"
+  "$(join_posix_path run user)"
+  "$(join_posix_path usr bin log)"
+  "$(join_posix_path etc subuid)"
+  "$(join_posix_path etc subgid)"
+  "$(join_posix_path bin bash)"
+)
+
+pattern_regex="$(
+  printf '%s\n' "${path_patterns[@]}" |
+    jq -Rsc 'split("\n")[:-1] | map(gsub("([.^$|()\\[\\]{}*+?\\\\])"; "\\\\\\1")) | join("|")'
+)"
+
+if [[ $# -eq 0 ]]; then
+  set -- README.md TESTS.md hardened-podman-machine-plan.md scripts config
+fi
+
+set +e
+rg -n --hidden --glob '!.git' --glob '!artifacts/**' "$pattern_regex" "$@"
+status=$?
+set -e
+
+case "$status" in
+  0)
+    [[ "$expect_matches" -eq 1 ]] && exit 0
+    fail "hardcoded absolute paths found"
+    ;;
+  1)
+    [[ "$expect_matches" -eq 1 ]] && fail "expected hardcoded absolute paths, but none were found"
+    exit 0
+    ;;
+  *)
+    exit "$status"
+    ;;
+esac

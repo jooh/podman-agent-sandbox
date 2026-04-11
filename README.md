@@ -26,7 +26,7 @@ The default machine name is `dev-agents`.
 
 The bootstrap flow does not overwrite `~/.config/containers/containers.conf`. It creates a temporary `containers.conf` and passes it to `podman machine init` via `CONTAINERS_CONF`.
 
-The current baseline avoids Podman's broad default shares like `/Users`, `/private`, and `/var/folders`. As implemented today, bootstrap appends one dedicated host share sourced from `.podman-machine-share` and mounts that into the guest at `/Users`.
+The current baseline avoids Podman's broad default macOS shares. As implemented today, bootstrap appends one dedicated host share sourced from `.podman-machine-share` and mounts that into the guest path selected by `PODMAN_GUEST_SHARE_DIR`.
 
 That is narrower than the Podman default, but it is not yet a true zero-mount setup.
 
@@ -58,6 +58,12 @@ The main point of this repo is to make the container-to-host path narrower by ha
 - Podman `5.8.1` was the version validated locally in this repo
 
 If you already have Podman installed and want to skip `brew bundle`, set `SKIP_BREW=1`.
+
+Path-related overrides:
+
+- `PODMAN_HOST_SHARE_DIR` changes the dedicated host directory shared into the VM.
+- `PODMAN_GUEST_SHARE_DIR` changes the guest mount target used for that share.
+- `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest socket path checked by verification.
 
 ## Quick Start
 
@@ -103,7 +109,7 @@ That path is intended for optional guest-side setup such as the dedicated `testr
 
 1. checks or installs Homebrew dependencies from `Brewfile`
 2. renders a temporary machine config from `config/podman-machine.containers.conf`
-3. appends one dedicated share from `.podman-machine-share` to `/Users`
+3. appends one dedicated share from `.podman-machine-share` to the guest path from `PODMAN_GUEST_SHARE_DIR`
 4. creates the machine if it does not already exist
 5. starts the machine
 6. runs `scripts/verify-podman-machine`
@@ -114,7 +120,7 @@ That path is intended for optional guest-side setup such as the dedicated `testr
 - the machine is rootless
 - broad host mount sources are absent
 - at most one dedicated host share is configured
-- `/run/podman/podman.sock` is absent in the guest
+- the configured rootful socket path is absent in the guest
 - host and guest Podman versions match
 
 ## No-Mount Diagnostics
@@ -160,6 +166,6 @@ So the repo currently keeps the one-share workaround for the hardened bootstrap 
 
 ## Manual Verification
 
-The manual red/green checks are recorded in [TESTS.md](/Users/johan/src/agdev/TESTS.md).
+The manual red/green checks are recorded in [TESTS.md](./TESTS.md).
 
-The higher-level implementation notes and rationale are in [hardened-podman-machine-plan.md](/Users/johan/src/agdev/hardened-podman-machine-plan.md).
+The higher-level implementation notes and rationale are in [hardened-podman-machine-plan.md](./hardened-podman-machine-plan.md).
