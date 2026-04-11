@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: diagnose-podman-machine-nomount [MACHINE_PREFIX]
+
+Create two fresh scratch Podman machines on macOS and capture comparable
+artifacts for:
+
+- a zero-mount machine created with `volumes = []`
+- a control machine created with one dedicated host share
+
+The report is written under `artifacts/podman-machine-diagnose/<MACHINE_PREFIX>/`.
+Existing scratch machines with the same prefix are removed before the run.
+EOF
+}
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is required"
+}
+
+machine_prefix="nomount-repro"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      fail "unknown option: $1"
+      ;;
+    *)
+      machine_prefix="$1"
+      ;;
+  esac
+  shift
+done
+
+require_command podman
+require_command jq
+require_command diff
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+containers_conf_base="$repo_root/config/podman-machine.containers.conf"
+host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
+guest_share_dir="/Users"
+artifacts_root="$repo_root/artifacts/podman-machine-diagnose/$machine_prefix"
+
+[[ -f "$containers_conf_base" ]] || fail "missing machine config: $containers_conf_base"
+
+mkdir -p "$host_share_dir"
+rm -rf "$artifacts_root"
+mkdir -p "$artifacts_root"
+
+ensure_other_machines_stopped() {
+  local exempt_a="$1"
+  local exempt_b="$2"
+  local other
+  local state
+
+  while IFS= read -r other; do
+    [[ -n "$other" ]] || continue
+    [[ "$other" == "$exempt_a" || "$other" == "$exempt_b" ]] && continue
+
+    state="$(podman machine inspect "$other" 2>/dev/null | jq -r '.[0].State // empty')"
+    if [[ "$state" == "running" ]]; then
+      fail "machine $other is running; stop it before diagnosing $machine_prefix"
+    fi
+  done < <(podman machine list --quiet)
+}
+
+remove_machine_if_present() {
+  local machine_name="$1"
+
+  if podman machine inspect "$machine_name" >/dev/null 2>&1; then
+    log "removing existing scratch machine $machine_name"
+    podman machine rm -f "$machine_name" >/dev/null
+  fi
+}
+
+write_case_config() {
+  local case_name="$1"
+  local output_path="$2"
+  local escaped_host_share_dir
+  local escaped_guest_share_dir
+
+  cat "$containers_conf_base" > "$output_path"
+
+  if [[ "$case_name" == "nomount" ]]; then
+    printf 'volumes = []\n' >> "$output_path"
+    return 0
+  fi
+
+  escaped_host_share_dir="${host_share_dir//\\/\\\\}"
+  escaped_host_share_dir="${escaped_host_share_dir//\"/\\\"}"
+  escaped_guest_share_dir="${guest_share_dir//\\/\\\\}"
+  escaped_guest_share_dir="${escaped_guest_share_dir//\"/\\\"}"
+  printf 'volumes = ["%s:%s"]\n' "$escaped_host_share_dir" "$escaped_guest_share_dir" >> "$output_path"
+}
+
+copy_machine_metadata() {
+  local machine_name="$1"
+  local report_dir="$2"
+  local inspect_path="$3"
+  local config_dir
+  local ignition_path
+  local machine_json_path
+
+  podman machine inspect "$machine_name" > "$inspect_path"
+  config_dir="$(jq -r '.[0].ConfigDir.Path' "$inspect_path")"
+  ignition_path="$config_dir/$machine_name.ign"
+  machine_json_path="$config_dir/$machine_name.json"
+
+  if [[ -f "$ignition_path" ]]; then
+    cp "$ignition_path" "$report_dir/$machine_name.ign"
+    jq -r '.systemd.units[]?.name' "$ignition_path" > "$report_dir/ignition-units.txt"
+    jq -r '.systemd.units[]? | select(.name | endswith(".mount")) | .name' "$ignition_path" > "$report_dir/ignition-mount-units.txt"
+    jq -r '.passwd.users[]?.name' "$ignition_path" > "$report_dir/ignition-passwd-users.txt"
+    {
+      printf 'systemd units:\n'
+      jq -r '.systemd.units[]?.name' "$ignition_path"
+      printf '\nmount units:\n'
+      jq -r '.systemd.units[]? | select(.name | endswith(".mount")) | .name' "$ignition_path"
+      printf '\npasswd users:\n'
+      jq -r '.passwd.users[]?.name' "$ignition_path"
+    } > "$report_dir/ignition-summary.txt"
+  fi
+
+  if [[ -f "$machine_json_path" ]]; then
+    cp "$machine_json_path" "$report_dir/$machine_name.json"
+  fi
+}
+
+poll_machine_state() {
+  local machine_name="$1"
+  local output_path="$2"
+  local attempt
+  local state
+
+  : > "$output_path"
+  for attempt in {1..10}; do
+    state="$(podman machine inspect "$machine_name" 2>/dev/null | jq -r '.[0].State // "missing"')"
+    printf 'attempt=%s state=%s\n' "$attempt" "$state" >> "$output_path"
+    sleep 2
+  done
+}
+
+capture_guest_artifacts() {
+  local machine_name="$1"
+  local report_dir="$2"
+
+  podman machine ssh "$machine_name" uname -a > "$report_dir/guest-uname.txt" 2>&1 || true
+  podman machine ssh "$machine_name" systemctl --failed --plain --no-legend --no-pager > "$report_dir/systemctl-failed.txt" 2>&1 || true
+  podman machine ssh "$machine_name" sudo journalctl -b --no-pager > "$report_dir/journal-boot.txt" 2>&1 || true
+  podman machine ssh "$machine_name" sudo journalctl -b -u ignition-files.service --no-pager > "$report_dir/journal-ignition-files.txt" 2>&1 || true
+  podman machine ssh "$machine_name" sudo journalctl -b -u coreos-ignition-unique-boot.service --no-pager > "$report_dir/journal-coreos-ignition-unique-boot.txt" 2>&1 || true
+  podman machine ssh "$machine_name" sudo journalctl -b -u systemd-fsck-root.service --no-pager > "$report_dir/journal-fsck-root.txt" 2>&1 || true
+}
+
+run_case() {
+  local case_name="$1"
+  local machine_name="$machine_prefix-$case_name"
+  local report_dir="$artifacts_root/$case_name"
+  local tmp_containers_conf
+  local start_status
+  local ssh_status
+  local ssh_ready=0
+  local ssh_output=""
+  local attempt
+  local state_after_poll
+
+  mkdir -p "$report_dir"
+  remove_machine_if_present "$machine_name"
+  ensure_other_machines_stopped "$machine_name" ""
+
+  tmp_containers_conf="$(mktemp)"
+  write_case_config "$case_name" "$tmp_containers_conf"
+  cp "$tmp_containers_conf" "$report_dir/containers.conf"
+
+  log "initializing $machine_name ($case_name)"
+  CONTAINERS_CONF="$tmp_containers_conf" podman --log-level=debug machine init "$machine_name" > "$report_dir/init.txt" 2>&1
+  copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.after-init.json"
+
+  log "starting $machine_name"
+  set +e
+  podman --log-level=debug machine start "$machine_name" > "$report_dir/start.txt" 2>&1
+  start_status=$?
+  set -e
+  printf '%s\n' "$start_status" > "$report_dir/start.exit"
+
+  podman machine list > "$report_dir/machine-list.after-start.txt" 2>&1 || true
+  copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.after-start.json"
+  poll_machine_state "$machine_name" "$report_dir/state-poll.txt"
+  state_after_poll="$(podman machine inspect "$machine_name" 2>/dev/null | jq -r '.[0].State // "missing"')"
+  printf '%s\n' "$state_after_poll" > "$report_dir/state.after-poll"
+
+  : > "$report_dir/ssh-probe.txt"
+  for attempt in {1..10}; do
+    set +e
+    ssh_output="$(podman machine ssh "$machine_name" true 2>&1)"
+    ssh_status=$?
+    set -e
+    printf 'attempt=%s exit=%s\n%s\n' "$attempt" "$ssh_status" "$ssh_output" >> "$report_dir/ssh-probe.txt"
+    if [[ "$ssh_status" -eq 0 ]]; then
+      ssh_ready=1
+      break
+    fi
+    sleep 2
+  done
+  printf '%s\n' "$ssh_ready" > "$report_dir/ssh.ready"
+
+  if [[ "$ssh_ready" -eq 1 ]]; then
+    log "capturing guest artifacts for $machine_name"
+    capture_guest_artifacts "$machine_name" "$report_dir"
+  else
+    printf '%s\n' "$ssh_output" > "$report_dir/ssh.last-error.txt"
+  fi
+
+  if [[ "$state_after_poll" == "running" ]]; then
+    log "stopping $machine_name"
+    podman machine stop "$machine_name" > "$report_dir/stop.txt" 2>&1 || true
+  fi
+
+  copy_machine_metadata "$machine_name" "$report_dir" "$report_dir/inspect.final.json"
+  rm -f "$tmp_containers_conf"
+}
+
+nomount_machine="$machine_prefix-nomount"
+control_machine="$machine_prefix-control"
+ensure_other_machines_stopped "$nomount_machine" "$control_machine"
+
+run_case nomount
+run_case control
+
+set +e
+diff -u "$artifacts_root/control/ignition-units.txt" "$artifacts_root/nomount/ignition-units.txt" > "$artifacts_root/ignition-units.diff"
+diff -u "$artifacts_root/control/ignition-passwd-users.txt" "$artifacts_root/nomount/ignition-passwd-users.txt" > "$artifacts_root/ignition-passwd-users.diff"
+set -e
+
+nomount_state="$(cat "$artifacts_root/nomount/state.after-poll")"
+nomount_ssh_ready="$(cat "$artifacts_root/nomount/ssh.ready")"
+control_state="$(cat "$artifacts_root/control/state.after-poll")"
+control_ssh_ready="$(cat "$artifacts_root/control/ssh.ready")"
+nomount_mount_units="$(wc -l < "$artifacts_root/nomount/ignition-mount-units.txt" | tr -d ' ')"
+control_mount_units="$(wc -l < "$artifacts_root/control/ignition-mount-units.txt" | tr -d ' ')"
+
+{
+  printf 'machine prefix: %s\n' "$machine_prefix"
+  printf 'artifacts root: %s\n' "$artifacts_root"
+  printf '\nnomount start exit: %s\n' "$(cat "$artifacts_root/nomount/start.exit")"
+  printf 'nomount final state: %s\n' "$nomount_state"
+  printf 'nomount ssh ready: %s\n' "$nomount_ssh_ready"
+  printf 'nomount mount units: %s\n' "$nomount_mount_units"
+  printf 'nomount immutable root units present:\n'
+  grep -E '^immutable-root-(off|on)\.service$' "$artifacts_root/nomount/ignition-units.txt" || true
+  printf '\ncontrol start exit: %s\n' "$(cat "$artifacts_root/control/start.exit")"
+  printf 'control final state: %s\n' "$control_state"
+  printf 'control ssh ready: %s\n' "$control_ssh_ready"
+  printf 'control mount units: %s\n' "$control_mount_units"
+  printf '\nDiffs:\n'
+  printf '- %s\n' "$artifacts_root/ignition-units.diff"
+  printf '- %s\n' "$artifacts_root/ignition-passwd-users.diff"
+} > "$artifacts_root/summary.txt"
+
+log "diagnostic artifacts written to $artifacts_root"
