@@ -4,14 +4,18 @@ This repo bootstraps a dedicated rootless Podman machine for Apple silicon macOS
 
 ## What The Repo Provides
 
-- `Brewfile` installs the required host tools: `podman` and `jq`.
 - `scripts/bootstrap-podman-machine` creates or starts the hardened machine and runs verification.
 - `scripts/verify-podman-machine` checks the machine's hardening invariants.
 - `config/podman-machine.containers.conf` is the scoped machine config template used only during `podman machine init`.
 
+Prerequisites:
+
+- `podman`
+- `jq`
+
 ## Supported Baseline
 
-Bootstrap does not overwrite `~/.config/containers/containers.conf`. It renders a temporary `containers.conf`, passes it to `podman machine init` via `CONTAINERS_CONF`, and appends `volumes = []` so the machine is created without Podman's broad default macOS shares or any repo-specific replacement share.
+Bootstrap does not overwrite `~/.config/containers/containers.conf`. It passes the repo's `config/podman-machine.containers.conf` to `podman machine init` via `CONTAINERS_CONF`, so the machine is created without Podman's broad default macOS shares.
 
 The verification script enforces the current baseline:
 
@@ -36,12 +40,6 @@ Use a different machine name:
 ./scripts/bootstrap-podman-machine my-machine
 ```
 
-Skip `brew bundle check/install` if the host tools are already installed:
-
-```bash
-SKIP_BREW=1 ./scripts/bootstrap-podman-machine
-```
-
 ## Verification
 
 Run the verifier directly:
@@ -52,7 +50,6 @@ Run the verifier directly:
 
 ## Useful Overrides
 
-- `SKIP_BREW=1` skips `brew bundle check/install`.
 - `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest rootful socket path checked by verification.
 
 ## Repo Maintenance Checks

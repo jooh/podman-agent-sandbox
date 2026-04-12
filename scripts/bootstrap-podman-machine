@@ -9,9 +9,6 @@ Create or start a hardened Podman machine with zero-mount defaults.
 
 Options:
   -h, --help       Show this help text.
-
-Environment:
-  SKIP_BREW=1      Skip `brew bundle check/install`.
 EOF
 }
 
@@ -44,31 +41,18 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-brewfile="$repo_root/Brewfile"
 containers_conf_base="$repo_root/config/podman-machine.containers.conf"
 verify_script="$repo_root/scripts/verify-podman-machine"
 
 command -v podman >/dev/null 2>&1 || fail "podman is required"
 
-if [[ "${SKIP_BREW:-0}" != "1" ]]; then
-  command -v brew >/dev/null 2>&1 || fail "brew is required unless SKIP_BREW=1"
-  log "checking Homebrew bundle"
-  brew bundle check --file "$brewfile" || brew bundle install --file "$brewfile"
-fi
-
 if [[ ! -f "$containers_conf_base" ]]; then
   fail "missing machine config: $containers_conf_base"
 fi
 
-tmp_containers_conf="$(mktemp)"
-trap 'rm -f "$tmp_containers_conf"' EXIT
-
-cat "$containers_conf_base" > "$tmp_containers_conf"
-printf 'volumes = []\n' >> "$tmp_containers_conf"
-
 if ! podman machine inspect "$machine_name" >/dev/null 2>&1; then
   log "creating machine $machine_name"
-  CONTAINERS_CONF="$tmp_containers_conf" podman machine init "$machine_name"
+  CONTAINERS_CONF="$containers_conf_base" podman machine init "$machine_name"
 fi
 
 state="$(podman machine inspect --format '{{.State}}' "$machine_name")"

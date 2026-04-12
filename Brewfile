@@ -1,2 +1,0 @@
-brew "podman"
-brew "jq"
