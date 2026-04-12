@@ -40,9 +40,3 @@ podman_broad_host_mount_sources_json() {
 podman_rootful_socket_path() {
   printf '%s\n' "${PODMAN_ROOTFUL_SOCKET_PATH:-$(join_posix_path run podman podman.sock)}"
 }
-
-podman_testrunner_socket_path() {
-  local uid="$1"
-
-  printf '%s\n' "${PODMAN_TESTRUNNER_SOCKET_PATH:-$(join_posix_path run user "$uid" podman podman.sock)}"
-}

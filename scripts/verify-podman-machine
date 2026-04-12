@@ -3,12 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: verify-podman-machine [--require-testrunner] MACHINE_NAME
+Usage: verify-podman-machine MACHINE_NAME
 
 Validate the hardening invariants for a named Podman machine.
 
 Options:
-  --require-testrunner  Require the optional guest playbook state.
   -h, --help            Show this help text.
 EOF
 }
@@ -35,14 +34,10 @@ wait_for_machine_ssh() {
   fail "machine $machine_name SSH did not become ready in time"
 }
 
-require_testrunner=0
 machine_name=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --require-testrunner)
-      require_testrunner=1
-      ;;
     -h|--help)
       usage
       exit 0
@@ -123,16 +118,5 @@ log "checking host/guest Podman version alignment"
 host_version="$(podman --version | awk '{print $3}')"
 guest_version="$(podman machine ssh "$machine_name" podman version --format '{{.Version}}')"
 [[ "$host_version" == "$guest_version" ]] || fail "host Podman $host_version does not match guest Podman $guest_version"
-
-if [[ "$require_testrunner" -eq 1 ]]; then
-  log "checking optional testrunner provisioning"
-  testrunner_uid="$(podman machine ssh "$machine_name" id -u testrunner 2>/dev/null || true)"
-  [[ -n "$testrunner_uid" ]] || fail "testrunner user is missing"
-
-  socket_path="$(podman_testrunner_socket_path "$testrunner_uid")"
-  if ! podman machine ssh "$machine_name" test -S "$socket_path"; then
-    fail "testrunner socket is missing at $socket_path"
-  fi
-fi
 
 log "machine $machine_name passed verification"

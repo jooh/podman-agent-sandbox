@@ -8,7 +8,6 @@ This repo bootstraps a dedicated rootless Podman machine for Apple silicon macOS
 - `scripts/bootstrap-podman-machine` creates or starts the hardened machine and runs verification.
 - `scripts/verify-podman-machine` checks the machine's hardening invariants.
 - `config/podman-machine.containers.conf` is the scoped machine config template used only during `podman machine init`.
-- `config/podman-agent-machine.playbook.yml` is an optional first-boot playbook for a dedicated `testrunner` user and rootless `podman.socket`.
 
 ## Supported Baseline
 
@@ -22,8 +21,6 @@ The verification script enforces the current baseline:
 - zero configured host mounts are present
 - the configured rootful Podman socket is absent in the guest
 - host and guest Podman versions match
-
-`--with-playbook` adds one optional layer on first create: a `testrunner` guest user with a per-user `podman.socket`. That state is checked with `./scripts/verify-podman-machine --require-testrunner <machine-name>`.
 
 ## Quick Start
 
@@ -45,14 +42,6 @@ Skip `brew bundle check/install` if the host tools are already installed:
 SKIP_BREW=1 ./scripts/bootstrap-podman-machine
 ```
 
-Apply the optional guest playbook on first create:
-
-```bash
-./scripts/bootstrap-podman-machine --with-playbook
-```
-
-`--with-playbook` only works while creating a new machine. Recreate the machine if you need to reprovision it.
-
 ## Verification
 
 Run the verifier directly:
@@ -61,17 +50,10 @@ Run the verifier directly:
 ./scripts/verify-podman-machine dev-agents
 ```
 
-Require the optional `testrunner` state:
-
-```bash
-./scripts/verify-podman-machine --require-testrunner dev-agents
-```
-
 ## Useful Overrides
 
 - `SKIP_BREW=1` skips `brew bundle check/install`.
 - `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest rootful socket path checked by verification.
-- `PODMAN_TESTRUNNER_SOCKET_PATH` changes the guest `testrunner` socket path checked by `--require-testrunner`.
 
 ## Repo Maintenance Checks
 

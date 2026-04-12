@@ -3,12 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap-podman-machine [--with-playbook] [MACHINE_NAME]
+Usage: bootstrap-podman-machine [MACHINE_NAME]
 
 Create or start a hardened Podman machine with zero-mount defaults.
 
 Options:
-  --with-playbook  Apply the guest provisioning playbook on first create.
   -h, --help       Show this help text.
 
 Environment:
@@ -26,13 +25,9 @@ log() {
 }
 
 machine_name="dev-agents"
-with_playbook=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --with-playbook)
-      with_playbook=1
-      ;;
     -h|--help)
       usage
       exit 0
@@ -51,7 +46,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 brewfile="$repo_root/Brewfile"
 containers_conf_base="$repo_root/config/podman-machine.containers.conf"
-playbook_path="$repo_root/config/podman-agent-machine.playbook.yml"
 verify_script="$repo_root/scripts/verify-podman-machine"
 
 command -v podman >/dev/null 2>&1 || fail "podman is required"
@@ -73,16 +67,8 @@ cat "$containers_conf_base" > "$tmp_containers_conf"
 printf 'volumes = []\n' >> "$tmp_containers_conf"
 
 if ! podman machine inspect "$machine_name" >/dev/null 2>&1; then
-  if [[ "$with_playbook" -eq 1 ]]; then
-    [[ -f "$playbook_path" ]] || fail "missing playbook: $playbook_path"
-    log "creating machine $machine_name with guest playbook"
-    CONTAINERS_CONF="$tmp_containers_conf" podman machine init --playbook "$playbook_path" "$machine_name"
-  else
-    log "creating machine $machine_name"
-    CONTAINERS_CONF="$tmp_containers_conf" podman machine init "$machine_name"
-  fi
-elif [[ "$with_playbook" -eq 1 ]]; then
-  fail "--with-playbook only applies on first create; remove and recreate $machine_name to reprovision it"
+  log "creating machine $machine_name"
+  CONTAINERS_CONF="$tmp_containers_conf" podman machine init "$machine_name"
 fi
 
 state="$(podman machine inspect --format '{{.State}}' "$machine_name")"
