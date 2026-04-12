@@ -7,8 +7,6 @@ This repo bootstraps a dedicated rootless Podman machine for Apple silicon macOS
 - `Brewfile` installs the required host tools: `podman` and `jq`.
 - `scripts/bootstrap-podman-machine` creates or starts the hardened machine and runs verification.
 - `scripts/verify-podman-machine` checks the machine's hardening invariants.
-- `scripts/diagnose-podman-machine-lifecycle` runs a scratch-machine lifecycle matrix across zero-mount, one-share, and Podman-default profiles.
-- `scripts/diagnose-podman-machine-nomount` keeps the older two-case zero-mount versus one-share comparison.
 - `config/podman-machine.containers.conf` is the scoped machine config template used only during `podman machine init`.
 - `config/podman-agent-machine.playbook.yml` is an optional first-boot playbook for a dedicated `testrunner` user and rootless `podman.socket`.
 
@@ -55,7 +53,7 @@ Apply the optional guest playbook on first create:
 
 `--with-playbook` only works while creating a new machine. Recreate the machine if you need to reprovision it.
 
-## Verification And Diagnostics
+## Verification
 
 Run the verifier directly:
 
@@ -69,39 +67,11 @@ Require the optional `testrunner` state:
 ./scripts/verify-podman-machine --require-testrunner dev-agents
 ```
 
-Run the lifecycle investigation matrix:
-
-```bash
-./scripts/diagnose-podman-machine-lifecycle
-```
-
-Run the older zero-mount versus one-share comparison:
-
-```bash
-./scripts/diagnose-podman-machine-nomount
-```
-
-The lifecycle harness writes artifacts under `artifacts/podman-machine-investigate/<machine-prefix>/` and captures first-boot and second-boot state across multiple mount profiles. The older two-case diagnostic writes artifacts under `artifacts/podman-machine-diagnose/<machine-prefix>/`.
-
-Both workflows capture:
-
-- generated machine config and ignition files
-- `podman machine inspect` output and state polling
-- host `vfkit`, `gvproxy`, and macOS unified logs when available
-- guest `journalctl` and `systemctl` output when SSH becomes available
-
-Use that workflow when a machine fails early enough that normal guest inspection is incomplete.
-
 ## Useful Overrides
 
 - `SKIP_BREW=1` skips `brew bundle check/install`.
 - `PODMAN_ROOTFUL_SOCKET_PATH` changes the guest rootful socket path checked by verification.
 - `PODMAN_TESTRUNNER_SOCKET_PATH` changes the guest `testrunner` socket path checked by `--require-testrunner`.
-- `MACOS_LOG_COMMAND` changes the host log command used by the diagnostic scripts.
-
-Generated local paths:
-
-- `artifacts/` stores diagnostic output and is ignored by git.
 
 ## Repo Maintenance Checks
 
@@ -110,8 +80,6 @@ For doc and script changes, the cheap repo-local checks are:
 ```bash
 bash -n scripts/bootstrap-podman-machine \
   scripts/verify-podman-machine \
-  scripts/diagnose-podman-machine-lifecycle \
-  scripts/diagnose-podman-machine-nomount \
   scripts/check-hardcoded-absolute-paths \
   scripts/lib/podman-machine-paths.sh
 
@@ -119,6 +87,4 @@ bash -n scripts/bootstrap-podman-machine \
 
 ./scripts/bootstrap-podman-machine --help
 ./scripts/verify-podman-machine --help
-./scripts/diagnose-podman-machine-lifecycle --help
-./scripts/diagnose-podman-machine-nomount --help
 ```
