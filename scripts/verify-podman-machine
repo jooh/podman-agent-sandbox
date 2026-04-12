@@ -66,8 +66,6 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 path_helpers="$script_dir/lib/podman-machine-paths.sh"
-repo_root="$(cd "$script_dir/.." && pwd)"
-host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
 [[ -f "$path_helpers" ]] || fail "missing path helpers: $path_helpers"
 # shellcheck source=./lib/podman-machine-paths.sh
 source "$path_helpers"
@@ -82,6 +80,15 @@ state="$(printf '%s\n' "$inspect_json" | jq -r '.[0].State // empty')"
 rootful="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Rootful')"
 [[ "$rootful" == "false" ]] || fail "machine $machine_name is rootful; expected a rootless machine"
 
+machine_config_path="$(printf '%s\n' "$inspect_json" | jq -r '.[0].ConfigDir.Path // empty')"
+machine_config_path="${machine_config_path:+$machine_config_path/$machine_name.json}"
+
+if [[ -n "$machine_config_path" && -f "$machine_config_path" ]]; then
+  mounts_json="$(jq -c '.Mounts // []' "$machine_config_path")"
+else
+  mounts_json="$(printf '%s\n' "$inspect_json" | jq -c '.[0].Mounts // []')"
+fi
+
 log "waiting for SSH readiness"
 wait_for_machine_ssh
 
@@ -93,20 +100,18 @@ fi
 
 log "checking configured host mount sources"
 unexpected_sources="$(
-  printf '%s\n' "$inspect_json" |
+  printf '%s\n' "$mounts_json" |
     jq -r --argjson broad_mount_sources "$broad_mount_sources_json" \
-      '.[0].Mounts[]? | select(.Source as $source | ($broad_mount_sources | index($source)) != null) | .Source'
+      '.[]? | select(.Source as $source | ($broad_mount_sources | index($source)) != null) | .Source'
 )"
 if [[ -n "$unexpected_sources" ]]; then
   fail "machine $machine_name exposes broad host mount sources: $(printf '%s' "$unexpected_sources" | paste -sd ', ' -)"
 fi
 
-mount_count="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Mounts | length')"
-[[ "$mount_count" -le 1 ]] || fail "machine $machine_name has $mount_count mounts; expected at most one dedicated host share"
-
-configured_source="$(printf '%s\n' "$inspect_json" | jq -r '.[0].Mounts[0].Source // empty')"
-if [[ -n "$configured_source" && "$configured_source" != "$host_share_dir" ]]; then
-  fail "machine $machine_name mounts $configured_source; expected only $host_share_dir"
+mount_count="$(printf '%s\n' "$mounts_json" | jq -r 'length')"
+if [[ "$mount_count" != "0" ]]; then
+  configured_mounts="$(printf '%s\n' "$mounts_json" | jq -r '.[]? | "\(.Source):\(.Target)"')"
+  fail "machine $machine_name has configured mounts; expected zero mounts. Found: $(printf '%s' "$configured_mounts" | paste -sd ', ' -)"
 fi
 
 log "checking rootful socket absence"

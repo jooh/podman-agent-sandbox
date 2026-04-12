@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: bootstrap-podman-machine [--with-playbook] [MACHINE_NAME]
 
-Create or start a hardened Podman machine with scoped machine defaults.
+Create or start a hardened Podman machine with zero-mount defaults.
 
 Options:
   --with-playbook  Apply the guest provisioning playbook on first create.
@@ -13,10 +13,6 @@ Options:
 
 Environment:
   SKIP_BREW=1      Skip `brew bundle check/install`.
-  PODMAN_HOST_SHARE_DIR
-                   Override the dedicated host path mounted into the VM.
-  PODMAN_GUEST_SHARE_DIR
-                   Override the guest path that receives the dedicated host share.
 EOF
 }
 
@@ -52,17 +48,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-path_helpers="$script_dir/lib/podman-machine-paths.sh"
 repo_root="$(cd "$script_dir/.." && pwd)"
 brewfile="$repo_root/Brewfile"
 containers_conf_base="$repo_root/config/podman-machine.containers.conf"
 playbook_path="$repo_root/config/podman-agent-machine.playbook.yml"
 verify_script="$repo_root/scripts/verify-podman-machine"
-host_share_dir="${PODMAN_HOST_SHARE_DIR:-$repo_root/.podman-machine-share}"
-[[ -f "$path_helpers" ]] || fail "missing path helpers: $path_helpers"
-# shellcheck source=./lib/podman-machine-paths.sh
-source "$path_helpers"
-guest_share_dir="$(podman_guest_share_dir)"
 
 command -v podman >/dev/null 2>&1 || fail "podman is required"
 
@@ -76,17 +66,11 @@ if [[ ! -f "$containers_conf_base" ]]; then
   fail "missing machine config: $containers_conf_base"
 fi
 
-mkdir -p "$host_share_dir"
 tmp_containers_conf="$(mktemp)"
 trap 'rm -f "$tmp_containers_conf"' EXIT
 
-escaped_host_share_dir="${host_share_dir//\\/\\\\}"
-escaped_host_share_dir="${escaped_host_share_dir//\"/\\\"}"
-escaped_guest_share_dir="${guest_share_dir//\\/\\\\}"
-escaped_guest_share_dir="${escaped_guest_share_dir//\"/\\\"}"
-
 cat "$containers_conf_base" > "$tmp_containers_conf"
-printf 'volumes = ["%s:%s"]\n' "$escaped_host_share_dir" "$escaped_guest_share_dir" >> "$tmp_containers_conf"
+printf 'volumes = []\n' >> "$tmp_containers_conf"
 
 if ! podman machine inspect "$machine_name" >/dev/null 2>&1; then
   if [[ "$with_playbook" -eq 1 ]]; then
