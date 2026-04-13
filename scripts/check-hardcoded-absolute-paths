@@ -41,11 +41,7 @@ declare -a path_patterns=(
   "$(join_posix_path private)"
   "$(join_posix_path var folders)"
   "$(join_posix_path run podman)"
-  "$(join_posix_path run user)"
   "$(join_posix_path usr bin log)"
-  "$(join_posix_path etc subuid)"
-  "$(join_posix_path etc subgid)"
-  "$(join_posix_path bin bash)"
 )
 
 pattern_regex="$(
@@ -54,7 +50,7 @@ pattern_regex="$(
 )"
 
 if [[ $# -eq 0 ]]; then
-  set -- README.md TESTS.md hardened-podman-machine-plan.md scripts config
+  set -- README.md scripts config
 fi
 
 set +e

@@ -21,10 +21,6 @@ join_posix_path() {
   printf '/%s\n' "${parts[*]}"
 }
 
-podman_guest_share_dir() {
-  printf '%s\n' "${PODMAN_GUEST_SHARE_DIR:-$(join_posix_path "${PODMAN_GUEST_SHARE_ROOT_NAME:-Users}")}"
-}
-
 podman_broad_host_mount_sources_json() {
   local users_path
   local private_path
@@ -43,14 +39,4 @@ podman_broad_host_mount_sources_json() {
 
 podman_rootful_socket_path() {
   printf '%s\n' "${PODMAN_ROOTFUL_SOCKET_PATH:-$(join_posix_path run podman podman.sock)}"
-}
-
-podman_testrunner_socket_path() {
-  local uid="$1"
-
-  printf '%s\n' "${PODMAN_TESTRUNNER_SOCKET_PATH:-$(join_posix_path run user "$uid" podman podman.sock)}"
-}
-
-podman_macos_log_command() {
-  printf '%s\n' "${MACOS_LOG_COMMAND:-log}"
 }
